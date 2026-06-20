@@ -1,0 +1,13 @@
+1.open a terminal (icon to the left of launch) and enter:
+wsl
+
+2.run launch_aero_hand.bat 
+
+If no there is no camera preview it is still working open and close your hands in front of the webcam to test
+- in a new terminal run:
+	wsl --update
+	wsl --shutdown
+- now run launch_aero_hand.bat 
+
+- lite is not connecting??
+- use for open hand only

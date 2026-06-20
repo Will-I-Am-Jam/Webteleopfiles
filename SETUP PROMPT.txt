@@ -1,0 +1,11 @@
+I need you to set up the Aero Hand Controller on this computer. The "Aero Hand Controller" folder is already on this machine — find it (check Desktop, Downloads, or Documents). Then do all of the following:
+
+1. Check if Python 3.10 or higher is installed. If it is not, tell me to install it from https://python.org and make sure "Add Python to PATH" is ticked during install, then wait for me to confirm before continuing.
+
+2. Run: pip install aero-open-sdk
+
+3. Create a shortcut to "Aero Hand Controller.bat" on the Desktop so it is easy to find and launch.
+
+4. Launch "Aero Hand Controller.bat" to confirm the GUI opens without errors.
+
+Once done, tell me it is ready to use. The app controls a TetherIA Aero Hand Lite over USB — plug the hand in, select the COM port in the GUI, click Connect, then use Power Grasp or Run Gesture Sequence.
