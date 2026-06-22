@@ -34,6 +34,9 @@ DEFAULT_TORQUE = 400  # 0-1000
 # Change this path if your .bat file is somewhere else.
 LAUNCH_BAT_PATH = r"C:\aero_launcher\launch_aero_hand.bat"
 
+# WSL distribution to open/restart when using the WSL terminal buttons.
+WSL_DISTRO = "Ubuntu-22.04"
+
 # ── Demo sequence — verbatim from sdk/examples/run_sequence.py ──
 DEMO_SEQUENCE = [
     ## Open Palm
@@ -162,7 +165,28 @@ class AeroHandGUI:
         ttk.Label(
             launch_frame,
             text=f"Runs: {LAUNCH_BAT_PATH}"
-        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ).grid(row=0, column=1, columnspan=2, sticky="w", padx=(8, 0))
+
+        self.open_wsl_btn = ttk.Button(
+            launch_frame,
+            text="Open WSL Terminal",
+            command=self._open_wsl_terminal,
+            width=24
+        )
+        self.open_wsl_btn.grid(row=1, column=0, padx=6, pady=4)
+
+        self.restart_wsl_btn = ttk.Button(
+            launch_frame,
+            text="Restart WSL + Open",
+            command=self._restart_wsl_terminal,
+            width=24
+        )
+        self.restart_wsl_btn.grid(row=1, column=1, sticky="w", padx=6, pady=4)
+
+        ttk.Label(
+            launch_frame,
+            text=f"Distro: {WSL_DISTRO}"
+        ).grid(row=1, column=2, sticky="w", padx=(8, 0))
 
         # ── Status bar ──
         self.status_var = tk.StringVar(value="Not connected.")
@@ -376,6 +400,69 @@ class AeroHandGUI:
         except Exception as e:
             messagebox.showerror("Launch Error", str(e))
             self._set_status(f"Launch failed: {e}")
+
+    def _open_wsl_terminal(self):
+        """Open a visible WSL 2 terminal for the configured Ubuntu distribution."""
+        try:
+            # Prefer Windows Terminal because it handles interactive WSL sessions well.
+            subprocess.Popen(
+                [
+                    "wt.exe",
+                    "new-tab",
+                    "--title",
+                    f"{WSL_DISTRO} Terminal",
+                    "wsl.exe",
+                    "-d",
+                    WSL_DISTRO,
+                ],
+                shell=False,
+            )
+            self._set_status(f"Opened WSL terminal: {WSL_DISTRO}")
+        except FileNotFoundError:
+            # Fallback for systems without Windows Terminal on PATH.
+            try:
+                subprocess.Popen(
+                    ["cmd.exe", "/c", "start", "", "wsl.exe", "-d", WSL_DISTRO],
+                    shell=False,
+                )
+                self._set_status(f"Opened WSL terminal: {WSL_DISTRO}")
+            except Exception as e:
+                messagebox.showerror("WSL Launch Error", str(e))
+                self._set_status(f"Could not open WSL terminal: {e}")
+        except Exception as e:
+            messagebox.showerror("WSL Launch Error", str(e))
+            self._set_status(f"Could not open WSL terminal: {e}")
+
+    def _restart_wsl_terminal(self):
+        """Shutdown WSL 2, then reopen the configured Ubuntu terminal."""
+        confirm = messagebox.askyesno(
+            "Restart WSL?",
+            "This will shut down all running WSL sessions, including any active ROS launch.\n\n"
+            "Continue?",
+        )
+        if not confirm:
+            return
+
+        self._set_status("Restarting WSL 2...")
+
+        def do_restart():
+            try:
+                subprocess.run(
+                    ["wsl.exe", "--shutdown"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                time.sleep(1.0)
+                self.root.after(0, self._open_wsl_terminal)
+            except Exception as e:
+                self.root.after(0, self._on_wsl_restart_error, str(e))
+
+        threading.Thread(target=do_restart, daemon=True).start()
+
+    def _on_wsl_restart_error(self, err):
+        messagebox.showerror("WSL Restart Error", err)
+        self._set_status(f"WSL restart failed: {err}")
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
