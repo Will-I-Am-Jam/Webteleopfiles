@@ -37,6 +37,10 @@ LAUNCH_BAT_PATH = r"C:\aero_launcher\launch_aero_hand.bat"
 # WSL distribution to open/restart when using the WSL terminal buttons.
 WSL_DISTRO = "Ubuntu-22.04"
 
+# Default USBIPD bus IDs. These are editable in the GUI before launch.
+DEFAULT_HAND_BUS_ID = "1-11"
+DEFAULT_CAMERA_BUS_ID = "1-3"
+
 # ── Demo sequence — verbatim from sdk/examples/run_sequence.py ──
 DEMO_SEQUENCE = [
     ## Open Palm
@@ -92,6 +96,10 @@ class AeroHandGUI:
         self.grasped = False
         self._busy = False
         self._torque_after_id = None  # debounce handle
+
+        # USBIPD bus IDs used by the ROS / WSL launcher.
+        self.hand_busid_var = tk.StringVar(value=DEFAULT_HAND_BUS_ID)
+        self.camera_busid_var = tk.StringVar(value=DEFAULT_CAMERA_BUS_ID)
 
         self._build_ui()
         self._refresh_ports()
@@ -154,18 +162,29 @@ class AeroHandGUI:
         launch_frame = ttk.LabelFrame(self.root, text="ROS / WSL Launch", padding=8)
         launch_frame.grid(row=4, column=0, sticky="ew", **PAD)
 
+        ttk.Label(launch_frame, text="Hand BUSID:").grid(row=0, column=0, sticky="w", padx=(6, 4), pady=4)
+        self.hand_busid_entry = ttk.Entry(launch_frame, textvariable=self.hand_busid_var, width=10)
+        self.hand_busid_entry.grid(row=0, column=1, sticky="w", padx=(0, 10), pady=4)
+
+        ttk.Label(launch_frame, text="Camera BUSID:").grid(row=0, column=2, sticky="w", padx=(6, 4), pady=4)
+        self.camera_busid_entry = ttk.Entry(launch_frame, textvariable=self.camera_busid_var, width=10)
+        self.camera_busid_entry.grid(row=0, column=3, sticky="w", padx=(0, 10), pady=4)
+
         self.launch_bat_btn = ttk.Button(
             launch_frame,
             text="Launch Webcam Teleop",
             command=self._run_launch_bat,
             width=24
         )
-        self.launch_bat_btn.grid(row=0, column=0, padx=6, pady=4)
+        self.launch_bat_btn.grid(row=1, column=0, columnspan=2, padx=6, pady=4)
 
-        ttk.Label(
+        self.stop_teleop_btn = ttk.Button(
             launch_frame,
-            text=f"Runs: {LAUNCH_BAT_PATH}"
-        ).grid(row=0, column=1, columnspan=2, sticky="w", padx=(8, 0))
+            text="Stop Webcam Teleop",
+            command=self._stop_webcam_teleop,
+            width=24
+        )
+        self.stop_teleop_btn.grid(row=1, column=2, columnspan=2, padx=6, pady=4)
 
         self.open_wsl_btn = ttk.Button(
             launch_frame,
@@ -173,7 +192,7 @@ class AeroHandGUI:
             command=self._open_wsl_terminal,
             width=24
         )
-        self.open_wsl_btn.grid(row=1, column=0, padx=6, pady=4)
+        self.open_wsl_btn.grid(row=2, column=0, columnspan=2, padx=6, pady=4)
 
         self.restart_wsl_btn = ttk.Button(
             launch_frame,
@@ -181,12 +200,41 @@ class AeroHandGUI:
             command=self._restart_wsl_terminal,
             width=24
         )
-        self.restart_wsl_btn.grid(row=1, column=1, sticky="w", padx=6, pady=4)
+        self.restart_wsl_btn.grid(row=2, column=2, columnspan=2, padx=6, pady=4)
+
+        self.bind_hand_btn = ttk.Button(
+            launch_frame,
+            text="Bind Hand BUSID",
+            command=self._bind_hand_busid,
+            width=24
+        )
+        self.bind_hand_btn.grid(row=3, column=0, columnspan=2, padx=6, pady=4)
+
+        self.bind_camera_btn = ttk.Button(
+            launch_frame,
+            text="Bind Camera BUSID",
+            command=self._bind_camera_busid,
+            width=24
+        )
+        self.bind_camera_btn.grid(row=3, column=2, columnspan=2, padx=6, pady=4)
+
+        self.list_usbipd_btn = ttk.Button(
+            launch_frame,
+            text="List USBIPD BUSIDs",
+            command=self._list_usbipd_busids,
+            width=24
+        )
+        self.list_usbipd_btn.grid(row=4, column=0, columnspan=2, padx=6, pady=4)
 
         ttk.Label(
             launch_frame,
-            text=f"Distro: {WSL_DISTRO}"
-        ).grid(row=1, column=2, sticky="w", padx=(8, 0))
+            text="Use List to find BUSIDs\nif Hand/Camera not shared already then Bind."
+        ).grid(row=4, column=2, columnspan=2, sticky="w", padx=6, pady=4)
+
+        ttk.Label(
+            launch_frame,
+            text=f"Launcher: {LAUNCH_BAT_PATH}  |  Distro: {WSL_DISTRO}"
+        ).grid(row=5, column=0, columnspan=4, sticky="w", padx=6, pady=(4, 0))
 
         # ── Status bar ──
         self.status_var = tk.StringVar(value="Not connected.")
@@ -378,7 +426,7 @@ class AeroHandGUI:
     # ── ROS / WSL Launch ──────────────────────────────────────────────────────
 
     def _run_launch_bat(self):
-        """Run the Windows .bat launcher that attaches USB devices and starts ROS 2."""
+        """Run the Windows .bat launcher with the hand/camera USBIPD bus IDs from the GUI."""
         if not os.path.exists(LAUNCH_BAT_PATH):
             messagebox.showerror(
                 "Launcher Not Found",
@@ -388,18 +436,314 @@ class AeroHandGUI:
             self._set_status("Launch failed: .bat file not found.")
             return
 
+        hand_busid = self.hand_busid_var.get().strip()
+        camera_busid = self.camera_busid_var.get().strip()
+
+        if not hand_busid:
+            messagebox.showwarning("Missing Hand BUSID", "Enter the USBIPD bus ID for the hand, for example 1-11.")
+            return
+
+        if not camera_busid:
+            messagebox.showwarning("Missing Camera BUSID", "Enter the USBIPD bus ID for the webcam, for example 1-3.")
+            return
+
         try:
             # Use Windows 'start' so the ROS launch opens in its own Command Prompt window.
+            # Pass hand_busid and camera_busid as arguments to launch_aero_hand.bat.
             if self.hand:
                 self._disconnect()  # Disconnect the hand before launching ROS, if connected.
+
             subprocess.Popen(
-                ["cmd.exe", "/c", "start", "", LAUNCH_BAT_PATH],
+                ["cmd.exe", "/c", "start", "", LAUNCH_BAT_PATH, hand_busid, camera_busid],
                 shell=False
             )
-            self._set_status("Started ROS launch batch file.")
+            self._set_status(f"Started webcam teleop with hand={hand_busid}, camera={camera_busid}.")
         except Exception as e:
             messagebox.showerror("Launch Error", str(e))
             self._set_status(f"Launch failed: {e}")
+
+    def _stop_webcam_teleop(self):
+        """Stop the ROS 2 webcam teleop launch and its child nodes inside WSL."""
+        confirm = messagebox.askyesno(
+            "Stop Webcam Teleop?",
+            "This will stop the webcam teleop ROS launch inside WSL.\n\n"
+            "The WSL terminal window may stay open, but the ROS nodes should stop.\n\n"
+            "Continue?",
+        )
+        if not confirm:
+            return
+
+        self.stop_teleop_btn.config(state="disabled")
+        self._set_status("Stopping webcam teleop in WSL...")
+
+        stop_command = """
+pkill -2 -f "webcam_teleop.launch.py" 2>/dev/null || true
+sleep 1
+pkill -15 -f "webcam_mocap|dex_retargeting_node|aero_hand_node" 2>/dev/null || true
+sleep 0.5
+pkill -9 -f "webcam_mocap|dex_retargeting_node|aero_hand_node" 2>/dev/null || true
+""".strip()
+
+        def do_stop():
+            try:
+                result = subprocess.run(
+                    ["wsl.exe", "-d", WSL_DISTRO, "--", "bash", "-lc", stop_command],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if result.returncode not in (0, 1):
+                    msg = (result.stderr or result.stdout or "Unknown stop error").strip()
+                    self.root.after(0, self._on_stop_teleop_error, msg)
+                else:
+                    self.root.after(0, self._on_stop_teleop_done)
+            except Exception as e:
+                self.root.after(0, self._on_stop_teleop_error, str(e))
+
+        threading.Thread(target=do_stop, daemon=True).start()
+
+    def _on_stop_teleop_done(self):
+        self.stop_teleop_btn.config(state="normal")
+        self._set_status("Stopped webcam teleop ROS processes in WSL.")
+
+    def _on_stop_teleop_error(self, err):
+        self.stop_teleop_btn.config(state="normal")
+        messagebox.showerror("Stop Teleop Error", err)
+        self._set_status(f"Failed to stop webcam teleop: {err}")
+
+    def _bind_hand_busid(self):
+        """Bind the hand BUSID from the GUI field using usbipd."""
+        busid = self.hand_busid_var.get().strip()
+        if not busid:
+            messagebox.showwarning("Missing Hand BUSID", "Enter the hand BUSID first, for example 1-11.")
+            return
+        self._bind_usbipd_busid(busid, "hand")
+
+    def _bind_camera_busid(self):
+        """Bind the camera BUSID from the GUI field using usbipd."""
+        busid = self.camera_busid_var.get().strip()
+        if not busid:
+            messagebox.showwarning("Missing Camera BUSID", "Enter the camera BUSID first, for example 1-3.")
+            return
+        self._bind_usbipd_busid(busid, "camera")
+
+    def _bind_usbipd_busid(self, busid, label):
+        """
+        Run 'usbipd bind --busid <busid>'.
+
+        Binding usually requires Administrator privileges. This method first tries
+        a normal bind. If Windows denies access, it launches an elevated PowerShell
+        command, which should show a UAC prompt.
+        """
+        confirm = messagebox.askyesno(
+            f"Bind {label.title()} BUSID?",
+            f"This will run usbipd bind for the {label} device:\n\n"
+            f"BUSID: {busid}\n\n"
+            "Windows may ask for Administrator permission. Continue?",
+        )
+        if not confirm:
+            return
+
+        self.bind_hand_btn.config(state="disabled")
+        self.bind_camera_btn.config(state="disabled")
+        self._set_status(f"Binding {label} BUSID {busid}...")
+
+        def do_bind():
+            try:
+                result = self._run_usbipd_command(["bind", "--busid", busid], timeout=20)
+                output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
+
+                if result.returncode == 0:
+                    self.root.after(0, self._on_bind_usbipd_done, busid, label, output)
+                    return
+
+                needs_admin = (
+                    "Access denied" in output
+                    or "administrator" in output.lower()
+                    or "requires administrator" in output.lower()
+                    or "privileges" in output.lower()
+                )
+
+                if needs_admin:
+                    elevated_result = self._run_usbipd_bind_elevated(busid)
+                    elevated_output = (
+                        (elevated_result.stdout or "") + "\n" + (elevated_result.stderr or "")
+                    ).strip()
+
+                    if elevated_result.returncode == 0:
+                        self.root.after(0, self._on_bind_usbipd_done, busid, label, elevated_output)
+                    else:
+                        msg = elevated_output or f"Elevated bind exited with code {elevated_result.returncode}"
+                        self.root.after(0, self._on_bind_usbipd_error, busid, label, msg)
+                    return
+
+                msg = output or f"usbipd bind exited with code {result.returncode}"
+                self.root.after(0, self._on_bind_usbipd_error, busid, label, msg)
+
+            except Exception as e:
+                self.root.after(0, self._on_bind_usbipd_error, busid, label, str(e))
+
+        threading.Thread(target=do_bind, daemon=True).start()
+
+    def _run_usbipd_command(self, args, timeout=15):
+        """Run usbipd with args, trying PATH first and then the default install location."""
+        commands_to_try = [
+            ["usbipd"] + args,
+            [r"C:\Program Files\usbipd-win\usbipd.exe"] + args,
+        ]
+
+        last_error = None
+        for cmd in commands_to_try:
+            try:
+                return subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+            except FileNotFoundError as e:
+                last_error = e
+
+        raise FileNotFoundError(
+            "Could not find usbipd. Install usbipd-win or add it to PATH. "
+            "Tried 'usbipd' and 'C:\\Program Files\\usbipd-win\\usbipd.exe'."
+        ) from last_error
+
+    def _run_usbipd_bind_elevated(self, busid):
+        """
+        Run usbipd bind through elevated PowerShell.
+
+        This should show a Windows UAC prompt. The usbipd output may appear in
+        a separate elevated process, so this function mainly tells us whether
+        PowerShell successfully started the elevated bind command.
+        """
+        escaped_busid = busid.replace("'", "''")
+
+        ps_command = (
+            "$exe = (Get-Command usbipd.exe -ErrorAction SilentlyContinue).Source; "
+            "if (-not $exe) { $exe = 'C:\\Program Files\\usbipd-win\\usbipd.exe' }; "
+            "if (-not (Test-Path $exe)) { throw 'usbipd.exe was not found.' }; "
+            f"Start-Process -FilePath $exe -ArgumentList @('bind','--busid','{escaped_busid}') -Verb RunAs -Wait"
+        )
+
+        return subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                ps_command,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+
+    def _on_bind_usbipd_done(self, busid, label, output):
+        self.bind_hand_btn.config(state="normal")
+        self.bind_camera_btn.config(state="normal")
+        self._set_status(f"Bound {label} BUSID {busid}.")
+        messagebox.showinfo(
+            "USBIPD Bind Complete",
+            f"Finished binding the {label} device.\n\nBUSID: {busid}\n\n"
+            "Now you can attach it or launch webcam teleop.\n\n"
+            "If this was run through a UAC prompt, use 'List USBIPD BUSIDs' to verify it shows as Shared."
+        )
+
+    def _on_bind_usbipd_error(self, busid, label, err):
+        self.bind_hand_btn.config(state="normal")
+        self.bind_camera_btn.config(state="normal")
+        messagebox.showerror(
+            "USBIPD Bind Error",
+            f"Could not bind the {label} device.\n\nBUSID: {busid}\n\n{err}\n\n"
+            "Try running this GUI as Administrator, or run this manually in Administrator PowerShell:\n\n"
+            f"usbipd bind --busid {busid}"
+        )
+        self._set_status(f"Failed to bind {label} BUSID {busid}: {err}")
+
+    def _list_usbipd_busids(self):
+        """Run 'usbipd list' on Windows and show the available USB BUSIDs."""
+        self.list_usbipd_btn.config(state="disabled")
+        self._set_status("Listing USBIPD devices...")
+
+        def do_list():
+            try:
+                result = self._run_usbipd_list()
+                output = result.stdout.strip()
+                error_output = result.stderr.strip()
+
+                if result.returncode != 0:
+                    msg = error_output or output or f"usbipd list exited with code {result.returncode}"
+                    self.root.after(0, self._on_usbipd_list_error, msg)
+                    return
+
+                if not output:
+                    output = "usbipd list returned no devices."
+
+                self.root.after(0, self._show_usbipd_list_window, output)
+            except Exception as e:
+                self.root.after(0, self._on_usbipd_list_error, str(e))
+
+        threading.Thread(target=do_list, daemon=True).start()
+
+    def _run_usbipd_list(self):
+        """Run 'usbipd list' using the shared usbipd command helper."""
+        return self._run_usbipd_command(["list"], timeout=10)
+
+    def _show_usbipd_list_window(self, output):
+        self.list_usbipd_btn.config(state="normal")
+        self._set_status("USBIPD devices listed.")
+
+        win = tk.Toplevel(self.root)
+        win.title("USBIPD BUSIDs")
+        win.geometry("900x420")
+
+        info = ttk.Label(
+            win,
+            text="Copy the BUSID values for your hand and camera into the GUI fields.",
+            padding=(8, 8),
+        )
+        info.pack(fill="x")
+
+        frame = ttk.Frame(win, padding=(8, 0, 8, 8))
+        frame.pack(fill="both", expand=True)
+
+        scrollbar = ttk.Scrollbar(frame)
+        scrollbar.pack(side="right", fill="y")
+
+        text_box = tk.Text(
+            frame,
+            wrap="none",
+            font=("Consolas", 10),
+            yscrollcommand=scrollbar.set,
+        )
+        text_box.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=text_box.yview)
+
+        text_box.insert("1.0", output)
+        text_box.config(state="disabled")
+
+        button_frame = ttk.Frame(win, padding=(8, 0, 8, 8))
+        button_frame.pack(fill="x")
+
+        def copy_output():
+            self.root.clipboard_clear()
+            self.root.clipboard_append(output)
+            self._set_status("Copied usbipd list output to clipboard.")
+
+        ttk.Button(button_frame, text="Copy Output", command=copy_output).pack(side="left")
+        ttk.Button(button_frame, text="Refresh", command=lambda: [win.destroy(), self._list_usbipd_busids()]).pack(side="left", padx=8)
+        ttk.Button(button_frame, text="Close", command=win.destroy).pack(side="right")
+
+    def _on_usbipd_list_error(self, err):
+        self.list_usbipd_btn.config(state="normal")
+        messagebox.showerror(
+            "USBIPD List Error",
+            f"Could not run 'usbipd list'.\n\n{err}\n\n"
+            "Make sure usbipd-win is installed and try running the GUI as a normal Windows app."
+        )
+        self._set_status(f"USBIPD list failed: {err}")
 
     def _open_wsl_terminal(self):
         """Open a visible WSL 2 terminal for the configured Ubuntu distribution."""
