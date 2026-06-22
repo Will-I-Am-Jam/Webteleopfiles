@@ -1,3 +1,4 @@
+      
 #!/usr/bin/env python3
 """
 Aero Hand Open — Simple GUI Controller
@@ -9,6 +10,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
 import time
+import os
+import subprocess
 
 try:
     import serial.tools.list_ports
@@ -26,6 +29,10 @@ OPEN_POSE = [100.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0]
 GRIP_POSE = [100.0, 80.0, 60.0, 90.0, 90.0, 90.0, 90.0]
 
 DEFAULT_TORQUE = 400  # 0-1000
+
+# Windows batch file used to launch the ROS 2 webcam teleop setup through WSL.
+# Change this path if your .bat file is somewhere else.
+LAUNCH_BAT_PATH = r"C:\aero_launcher\launch_aero_hand.bat"
 
 # ── Demo sequence — verbatim from sdk/examples/run_sequence.py ──
 DEMO_SEQUENCE = [
@@ -140,10 +147,27 @@ class AeroHandGUI:
         torque_spin.grid(row=0, column=1, padx=(4, 0))
         self.torque_var.trace_add("write", lambda *_: self._on_torque_changed())
 
+        # ── ROS / WSL Launcher ──
+        launch_frame = ttk.LabelFrame(self.root, text="ROS / WSL Launch", padding=8)
+        launch_frame.grid(row=4, column=0, sticky="ew", **PAD)
+
+        self.launch_bat_btn = ttk.Button(
+            launch_frame,
+            text="Launch Webcam Teleop",
+            command=self._run_launch_bat,
+            width=24
+        )
+        self.launch_bat_btn.grid(row=0, column=0, padx=6, pady=4)
+
+        ttk.Label(
+            launch_frame,
+            text=f"Runs: {LAUNCH_BAT_PATH}"
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+
         # ── Status bar ──
         self.status_var = tk.StringVar(value="Not connected.")
         ttk.Label(self.root, textvariable=self.status_var, relief="sunken", anchor="w").grid(
-            row=4, column=0, sticky="ew", padx=10, pady=(0, 8))
+            row=5, column=0, sticky="ew", padx=10, pady=(0, 8))
 
     # ── Port management ────────────────────────────────────────────────────────
 
@@ -279,13 +303,11 @@ class AeroHandGUI:
 
         def do_sequence():
             try:
-                # for waypoints in self.hand.create_trajectory(DEMO_SEQUENCE):
-                #     self.hand.set_joint_positions(waypoints)
-                #     time.sleep(0.01)
-                self.hand.run_trajectory(DEMO_SEQUENCE)
+                for waypoints in self.hand.create_trajectory(DEMO_SEQUENCE):
+                    self.hand.set_joint_positions(waypoints)
+                    time.sleep(0.01)
                 self.root.after(0, self._on_sequence_done)
             except Exception as e:
-                print(f"Sequence error: {e}")
                 self.root.after(0, self._on_sequence_error, str(e))
 
         threading.Thread(target=do_sequence, daemon=True).start()
@@ -329,6 +351,32 @@ class AeroHandGUI:
 
         threading.Thread(target=do_torque, daemon=True).start()
 
+    # ── ROS / WSL Launch ──────────────────────────────────────────────────────
+
+    def _run_launch_bat(self):
+        """Run the Windows .bat launcher that attaches USB devices and starts ROS 2."""
+        if not os.path.exists(LAUNCH_BAT_PATH):
+            messagebox.showerror(
+                "Launcher Not Found",
+                f"Could not find the launch file:\n{LAUNCH_BAT_PATH}\n\n"
+                "Update LAUNCH_BAT_PATH near the top of this Python file."
+            )
+            self._set_status("Launch failed: .bat file not found.")
+            return
+
+        try:
+            # Use Windows 'start' so the ROS launch opens in its own Command Prompt window.
+            if self.hand:
+                self._disconnect()  # Disconnect the hand before launching ROS, if connected.
+            subprocess.Popen(
+                ["cmd.exe", "/c", "start", "", LAUNCH_BAT_PATH],
+                shell=False
+            )
+            self._set_status("Started ROS launch batch file.")
+        except Exception as e:
+            messagebox.showerror("Launch Error", str(e))
+            self._set_status(f"Launch failed: {e}")
+
     # ── Helpers ────────────────────────────────────────────────────────────────
 
     def _set_controls(self, enabled):
@@ -360,3 +408,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+    
